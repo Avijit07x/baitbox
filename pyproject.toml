@@ -1,7 +1,7 @@
 [project]
 name = "baitbox"
 version = "0.1.0"
-description = "Check a project from a client, a job test or a stranger for malware before you open it."
+description = "Malware scanner and sandbox for untrusted Node.js projects."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"

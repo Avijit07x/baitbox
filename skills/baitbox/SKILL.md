@@ -1,9 +1,9 @@
 ---
 name: baitbox
-description: Check a client's or stranger's project (zip, tar, folder or git URL) for malware before the user opens or runs it. Runs BaitBox, which unpacks it safely, reads every file that can run code, checks each npm package against npm and the OSV malware database, then installs and runs it inside a locked sandbox (no network, fake home with bait secrets, every file and network action recorded), and reports a verdict. Use when the user says "check this project", "use your own box", "use baitbox", "is this safe to run", or gets code from a freelance client, a job test, or any unknown source, even if they don't name the skill.
+description: Check an untrusted project (zip, tar, folder or git URL) for malware before it is opened or run. Runs BaitBox, which unpacks it safely, reads every file that can run code, checks each npm package against npm and the OSV malware database, then installs and runs it in an isolated sandbox (no network, decoy home with bait credentials, every file and network action recorded) and reports a verdict. Use when the user asks to check a project, asks whether a project is safe to run, mentions BaitBox, or has code from an unknown or untrusted source, even if they don't name the skill.
 ---
 
-# BaitBox: check a project before anyone opens it
+# BaitBox
 
 Background: config files are code. A real attack hid in a fake Tailwind plugin, `tw-motion-css`. It ran as soon as VS Code's Tailwind extension or `next dev` loaded `tailwind.config.js`, called `216.126.231.70:1224`, and installed hidden startup services. It used no install script, so `--ignore-scripts` and `npm audit` would not have stopped it.
 

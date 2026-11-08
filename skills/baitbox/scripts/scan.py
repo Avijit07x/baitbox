@@ -439,7 +439,7 @@ class Scan:
         issues = []
         sev = "info"
         if re.search(r"_authToken|_auth\s*=|_password\s*=", t):
-            issues.append("contains an npm login token (a client project should not need one)")
+            issues.append("contains an npm login token; projects rarely need to ship one")
             sev = "medium"
         for m in re.finditer(r"^\s*(@[\w.-]+:)?registry\s*=\s*(\S+)", t, re.M):
             if "registry.npmjs.org" not in m.group(2):
