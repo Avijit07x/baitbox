@@ -1,0 +1,32 @@
+name: Missed detection
+description: BaitBox said a project was fine, but it was not.
+labels: [detection]
+body:
+  - type: markdown
+    attributes:
+      value: Do not attach live malware. Share names, versions, hashes and the lines that matter.
+  - type: input
+    id: what
+    attributes:
+      label: Package, file or technique
+      placeholder: "evil-pkg@1.2.3, or: config file that spawns curl"
+    validations:
+      required: true
+  - type: textarea
+    id: behaviour
+    attributes:
+      label: What the code does
+      description: What it reads, writes, runs or connects to, and when it runs.
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: What BaitBox reported
+      description: Paste the verdict and the relevant lines from report.md or sandbox.txt.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: BaitBox version
+      placeholder: baitbox --version

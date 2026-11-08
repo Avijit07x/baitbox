@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff shellcheck-py
+      - run: ruff check .
+      - run: shellcheck skills/baitbox/scripts/box.sh bin/baitbox
+
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install sandbox tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap strace
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: pip install pytest
+      - run: bin/baitbox doctor
+      - run: python -m pytest -q
+      - run: bin/baitbox selftest

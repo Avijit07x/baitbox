@@ -1,0 +1,24 @@
+name: Bug report
+description: BaitBox crashed, hung or gave a wrong error.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran and the output.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of baitbox doctor
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      placeholder: "Ubuntu 24.04, kernel 6.8, Python 3.12, Node 22"
