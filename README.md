@@ -229,7 +229,9 @@ EOF
 sudo apparmor_parser -r /etc/apparmor.d/bwrap
 ```
 
-**`strace can follow the sandbox` fails.** BaitBox needs the standard non-setuid `bwrap` and `kernel.yama.ptrace_scope` set to 0 or 1.
+**`strace can follow the sandbox` fails.** BaitBox needs the standard non-setuid `bwrap` and `kernel.yama.ptrace_scope` set to 0, 1 or 2.
+
+**`ptrace_scope` is 2.** At 2 only root may trace, so each sandbox run asks for your sudo password, sets it to 1 while the run is recorded, and sets it back to 2 when the run ends, even if the run fails or is interrupted. Run BaitBox in a terminal, so sudo can ask. Doctor skips the `strace` check at 2.
 
 **Install fails or times out.** See `box/logs/*-net-*.out`. Private packages are expected to fail, because project `.npmrc` files are off during installation.
 

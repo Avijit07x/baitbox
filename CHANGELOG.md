@@ -4,6 +4,8 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## Unreleased
 
+- Works with `kernel.yama.ptrace_scope=2`. Each sandbox run asks for the sudo password, sets it to 1 while the run is recorded, and sets it back to 2 when the run ends. Before, every run failed, and doctor blamed a setuid `bwrap`. Doctor now reports 2 as usable and names 3 as the value that turns ptrace off.
+
 ## 0.1.0 - 2026-11-08
 
 First public release.

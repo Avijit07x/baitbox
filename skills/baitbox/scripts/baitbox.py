@@ -508,8 +508,11 @@ def cmd_doctor(_a):
         row("sandbox starts", ok, "ok" if ok else first_line(outp), hint)
     ys = Path("/proc/sys/kernel/yama/ptrace_scope")
     scope = ys.read_text().strip() if ys.exists() else "0"
-    row("ptrace allowed", scope in ("0", "1"), f"kernel.yama.ptrace_scope={scope}", "strace needs ptrace_scope 0 or 1")
-    if shutil.which("bwrap") and shutil.which("strace"):
+    if scope == "2":
+        row("ptrace allowed", True, "kernel.yama.ptrace_scope=2: each run asks for your sudo password and sets it to 1 until the run ends")
+    else:
+        row("ptrace allowed", scope in ("0", "1"), f"kernel.yama.ptrace_scope={scope}", "strace needs ptrace_scope 0, 1 or 2; 3 turns ptrace off until reboot")
+    if shutil.which("bwrap") and shutil.which("strace") and scope in ("0", "1"):
         ok, outp = probe(["strace", "-f", "-o", "/dev/null", "bwrap", "--ro-bind", "/", "/", "--unshare-all", "--die-with-parent", "true"])
         row("strace can follow the sandbox", ok, "ok" if ok else first_line(outp), "bwrap may be setuid on this system; BaitBox needs the non-setuid build")
     width = max(len(r[0]) for r in rows)

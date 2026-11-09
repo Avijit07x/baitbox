@@ -6,6 +6,7 @@ readonly FAKE_HOME=/home/$FAKE_USER
 readonly FAKE_HOST=alex-thinkpad
 readonly TRACED_CALLS=clone,clone3,fork,vfork,execve,execveat,open,openat,openat2,creat,connect,sendto,sendmsg,sendmmsg,bind,rename,renameat,renameat2,unlink,unlinkat,mkdir,mkdirat,symlink,symlinkat,link,linkat,chmod,fchmod,fchmodat,truncate,ptrace
 readonly CACHE_PRUNE=(-path ./.npm -o -path ./.cache -o -path ./.local/share/pnpm -o -path ./.local/state -o -path ./.pnpm-store)
+readonly SUDO=/usr/bin/sudo
 
 die() {
   printf 'box.sh: %s\n' "$*" >&2
@@ -190,6 +191,31 @@ if [ "$mode" = net ]; then
   esac
 fi
 args+=(--setenv PATH "$path")
+
+scope=$(cat /proc/sys/kernel/yama/ptrace_scope 2> /dev/null || printf 0)
+lowered=0
+restore_scope() {
+  [ "$lowered" = 1 ] || return 0
+  lowered=0
+  if ! "$SUDO" -n sysctl -q -w "kernel.yama.ptrace_scope=$scope" 2> /dev/null &&
+    ! "$SUDO" -p "BaitBox: password to set ptrace_scope back to $scope: " sysctl -q -w "kernel.yama.ptrace_scope=$scope"; then
+    printf 'box.sh: could not set ptrace_scope back to %s. Run: sudo sysctl -w kernel.yama.ptrace_scope=%s\n' "$scope" "$scope" >&2
+  fi
+}
+case $scope in
+  0 | 1) ;;
+  2)
+    [ -x "$SUDO" ] || die "kernel.yama.ptrace_scope is 2 and $SUDO is missing, so strace cannot record the sandbox"
+    "$SUDO" -p "BaitBox: password to set ptrace_scope to 1 while this run is recorded: " sysctl -q -w kernel.yama.ptrace_scope=1 ||
+      die "kernel.yama.ptrace_scope is 2 and sudo could not set it to 1. Run baitbox in a terminal, so sudo can ask for your password"
+    lowered=1
+    trap restore_scope EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    ;;
+  *) die "kernel.yama.ptrace_scope is $scope, which turns ptrace off, so strace cannot record the sandbox" ;;
+esac
 
 strace_opts=(-f -qq -y -s 512 -e signal=none -e "trace=$TRACED_CALLS")
 if strace --kill-on-exit -o /dev/null true > /dev/null 2>&1; then
