@@ -1,6 +1,7 @@
 import json
 
-import analyze
+from baitbox import analyze, cli
+from baitbox.analyze import strace
 
 FH = "/home/alex"
 DECOYS = [".ssh/id_ed25519", ".aws/credentials", ".npmrc", ".gitconfig", ".config/google-chrome/Default/Login Data"]
@@ -136,8 +137,8 @@ def test_dns_query_decoding(tmp_path):
 
 
 def test_dns_decoder_rejects_garbage():
-    assert analyze.dns_query_name(b"hello world this is not dns") is None
-    assert analyze.dns_query_name(b"\x00" * 40) is None
+    assert strace.dns_query_name(b"hello world this is not dns") is None
+    assert strace.dns_query_name(b"\x00" * 40) is None
 
 
 def test_persistence_and_system_writes(tmp_path):
@@ -246,13 +247,13 @@ def test_home_diff(tmp_path):
 
 
 def test_c_unescape():
-    assert analyze.c_unescape(r"a\"b\\c\n\x41\101\0") == b'a"b\\c\nAA\x00'
-    assert analyze.c_unescape("tail\\") == b"tail\\"
+    assert strace.c_unescape(r"a\"b\\c\n\x41\101\0") == b'a"b\\c\nAA\x00'
+    assert strace.c_unescape("tail\\") == b"tail\\"
 
 
 def test_render_and_cli(tmp_path, capsys):
     box = make_box(tmp_path, ['103 connect(21<socket:[1]>, {sa_family=AF_INET, sin_port=htons(1224), sin_addr=inet_addr("216.126.231.70")}, 16) = -1 ENETUNREACH (Network is unreachable)'])
-    assert analyze.main([str(box)]) == 2
+    assert cli.main(["analyze", str(box)]) == 2
     out = capsys.readouterr().out
     assert "HIGH" in out and "216.126.231.70:1224" in out
-    assert analyze.main([str(tmp_path / "empty")]) == 3
+    assert cli.main(["analyze", str(tmp_path / "empty")]) == 3

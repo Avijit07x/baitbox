@@ -1,9 +1,9 @@
+import json
 import subprocess
 
-import analyze
-from conftest import SCRIPTS, needs_sandbox, write
-
-BOX = SCRIPTS / "box.sh"
+from baitbox import analyze, sandbox
+from baitbox.sandbox import BOX
+from conftest import needs_sandbox, write
 
 
 def run_box(*args, env=None):
@@ -99,3 +99,48 @@ def test_fake_home_reused_and_changes_recorded(tmp_path):
     assert len(diffs) == 2
     assert ".bashrc" in diffs[0].read_text()
     assert diffs[1].read_text().strip() == ""
+
+
+def test_package_dirs_and_workspaces(tmp_path):
+    write(tmp_path, "package.json", json.dumps({"workspaces": ["packages/*"]}))
+    write(tmp_path, "packages/a/package.json", "{}")
+    write(tmp_path, "other/package.json", "{}")
+    write(tmp_path, "other/node_modules/x/package.json", "{}")
+    write(tmp_path, "a/b/c/d/e/package.json", "{}")
+    dirs = [str(d) for d in sandbox.find_package_dirs(tmp_path)]
+    assert dirs == ["."]
+    write(tmp_path / "two", "front/package.json", "{}")
+    write(tmp_path / "two", "back/package.json", "{}")
+    assert sorted(str(d) for d in sandbox.find_package_dirs(tmp_path / "two")) == ["back", "front"]
+
+
+def test_install_command_uses_safe_flags(tmp_path):
+    write(tmp_path, "a/package.json", "{}")
+    write(tmp_path, "a/package-lock.json", "{}")
+    write(tmp_path, "b/package.json", "{}")
+    write(tmp_path, "b/pnpm-lock.yaml", "")
+    write(tmp_path, "c d/package.json", "{}")
+    write(tmp_path, "c d/yarn.lock", "")
+    from pathlib import Path
+
+    cmd, notes = sandbox.install_command(tmp_path, [Path("a"), Path("b"), Path("c d")])
+    assert cmd.count("--ignore-scripts") >= 4 and "--ignore-pnpmfile" in cmd
+    assert "'c d'" in cmd and "yarn" in notes[0]
+
+
+def test_npmrc_is_disabled_and_restored(tmp_path):
+    write(tmp_path, ".npmrc", "//registry.npmjs.org/:_authToken=secret\n")
+    write(tmp_path, "sub/.npmrc", "registry=https://evil.example\n")
+    moved = sandbox.disable_npmrcs(tmp_path)
+    assert len(moved) == 2 and not (tmp_path / ".npmrc").exists()
+    sandbox.restore_npmrcs(moved)
+    assert (tmp_path / ".npmrc").read_text().startswith("//registry") and (tmp_path / "sub/.npmrc").exists()
+
+
+def test_run_command_quotes_paths(tmp_path):
+    from pathlib import Path
+
+    write(tmp_path, "my app/package.json", json.dumps({"scripts": {"build": "x", "dev": "y", "test": "z"}}))
+    cmd = sandbox.run_command(tmp_path, [Path("my app")], ["my app/vite.config.ts"], 500)
+    assert "'my app'" in cmd and "npm run build" in cmd and "npm run test" not in cmd
+    assert "--experimental-strip-types" in cmd and "sleep 30" in cmd

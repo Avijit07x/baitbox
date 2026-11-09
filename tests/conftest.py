@@ -1,12 +1,8 @@
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
-
-SCRIPTS = Path(__file__).resolve().parent.parent / "skills" / "baitbox" / "scripts"
-sys.path.insert(0, str(SCRIPTS))
 
 
 def sandbox_available():
@@ -24,11 +20,6 @@ def sandbox_available():
 
 SANDBOX = sandbox_available()
 needs_sandbox = pytest.mark.skipif(not SANDBOX, reason="bubblewrap, strace or node unavailable, or user namespaces blocked")
-
-
-@pytest.fixture
-def scripts_dir():
-    return SCRIPTS
 
 
 def write(root, rel, content, mode=None):

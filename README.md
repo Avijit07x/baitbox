@@ -114,7 +114,7 @@ sudo apparmor_parser -r /etc/apparmor.d/bwrap
 
 ## Claude Code skill
 
-[`skills/baitbox`](skills/baitbox/SKILL.md) lets Claude Code run a check and explain the result. It never runs project code outside the sandbox.
+[`skills/baitbox`](skills/baitbox/SKILL.md) lets Claude Code run a check and explain the result. It uses the `baitbox` command, so install that first. It never runs project code outside the sandbox.
 
 ```bash
 ln -s "$PWD/skills/baitbox" ~/.claude/skills/baitbox

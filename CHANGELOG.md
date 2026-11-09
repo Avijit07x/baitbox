@@ -4,6 +4,8 @@ All notable changes are listed here. The project follows [Semantic Versioning](h
 
 ## Unreleased
 
+- The code moved out of the skill folder into a Python package, `src/baitbox/`, with one folder per check step. Commands, reports and exit codes are unchanged. The skill now calls the `baitbox` command, so install the command before you link the skill.
+- Help and error messages from `baitbox scan`, `deps` and `analyze` now show the command name instead of `scan.py`, `deps.py` or `analyze.py`.
 - Works with `kernel.yama.ptrace_scope=2`. Each sandbox run asks for the sudo password, sets it to 1 while the run is recorded, and sets it back to 2 when the run ends. Before, every run failed, and doctor blamed a setuid `bwrap`. Doctor now reports 2 as usable and names 3 as the value that turns ptrace off.
 
 ## 0.1.0 - 2026-11-08

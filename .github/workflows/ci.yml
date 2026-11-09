@@ -22,7 +22,7 @@ jobs:
           python-version: "3.12"
       - run: pip install ruff shellcheck-py
       - run: ruff check .
-      - run: shellcheck skills/baitbox/scripts/box.sh bin/baitbox
+      - run: shellcheck src/baitbox/sandbox/box.sh bin/baitbox
 
   test:
     runs-on: ubuntu-24.04

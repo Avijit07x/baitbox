@@ -1,158 +1,34 @@
-import argparse
 import hashlib
-import ipaddress
 import json
 import os
 import re
-import sys
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 
-SEVERITIES = ("high", "medium", "info")
-KNOWN_HASHES = {
-    "5c0d263e6decfa6d4db3da32eec9ec3f5c83b717d55390f49110cb8d04f55fd6": "tw-motion-css backdoor (runtime.js)",
-    "cddec7017154aebf01b317099add0b2d0adc2d1a964f601816f03782db00a743": "@codentra/postcss-kinetix loader (config.js)",
-}
-KNOWN_STRINGS = (
-    "DEERGS42", "216.126.231.70", "153.75.88.215", "tw-motion-css", "postcss-kinetix", "@codentra/", "carybernal",
-    "gvfs-network-boot", "gvfs-network-activate",
+from baitbox import SEVERITIES
+from baitbox.scan.helpers import code_like, magic, mask_tokens, package_of, public_ip, snippet
+from baitbox.scan.rules import (
+    CAP_NM,
+    CAP_PER_FILE,
+    CAP_PROJECT,
+    CODE_EXT,
+    CONFIG_RE,
+    IMPORT_RE,
+    KNOWN_HASHES,
+    LIFECYCLE,
+    MAX_FILE,
+    OTHER_AUTORUN,
+    PACKED_DIRS,
+    PKG_TOOL_KEYS,
+    PREBUILT_OK,
+    PY_AUTORUN,
+    RC_JS_RE,
+    SOURCE_ONLY,
+    STRONG,
+    TEXT_EXT,
+    VSCODE_RISKY_KEYS,
+    WIN_EXT,
 )
-CONFIG_RE = re.compile(
-    r"^(tailwind|postcss|vite|vitest|next|nuxt|astro|svelte|webpack|rollup|babel|jest|eslint|prettier|tsup|esbuild"
-    r"|remix|gatsby|metro|playwright|cypress|stylelint|commitlint|lint-staged|electron-builder|electron\.vite|quasar"
-    r"|vue|angular|unocss|uno|panda|drizzle|knip|turbo|wrangler|react-router|rspack|rsbuild|farm|storybook|histoire"
-    r"|vuepress|docusaurus|tsdown|rolldown|unbuild|webpack\.dev|webpack\.prod|craco|karma|mocha|ava|c8|nyc"
-    r"|graphql|codegen|orval|kubb|sanity|payload|keystatic|contentlayer|velite|i18next-parser|svgo|size-limit)"
-    r"\.config\.(js|cjs|mjs|ts|cts|mts|json|jsx|tsx)$"
-)
-RC_JS_RE = re.compile(r"^\.(babelrc|eslintrc|prettierrc|stylelintrc|lintstagedrc|mocharc|postcssrc|swcrc|ncurc|releaserc)\.(js|cjs|mjs|ts)$")
-OTHER_AUTORUN = {
-    "gulpfile.js": "runs when gulp starts", "Gruntfile.js": "runs when grunt starts", "Makefile": "runs on make",
-    "Dockerfile": "runs on docker build", "docker-compose.yml": "runs on docker compose",
-    "docker-compose.yaml": "runs on docker compose", "compose.yml": "runs on docker compose",
-    "compose.yaml": "runs on docker compose", "Procfile": "runs on deploy", "justfile": "runs on just",
-    "build.rs": "runs on cargo build", "nodemon.json": "configures nodemon", "deno.json": "configures deno tasks",
-    "tsconfig.json": "editors load TypeScript plugins listed here", "jsconfig.json": "editors load plugins listed here",
-}
-PY_AUTORUN = {"setup.py": "medium", "conftest.py": "medium", "sitecustomize.py": "high", "usercustomize.py": "high", "noxfile.py": "info", "tasks.py": "info"}
-LIFECYCLE = ("preinstall", "install", "postinstall", "prepare", "preprepare", "postprepare", "prepublish", "prepack", "postpack", "dependencies")
-PKG_TOOL_KEYS = ("eslintConfig", "prettier", "babel", "jest", "stylelint", "postcss", "lint-staged", "husky", "simple-git-hooks", "ava", "mocha", "nyc", "c8", "xo")
-VSCODE_RISKY_KEYS = re.compile(
-    r'"(terminal\.integrated\.(?:shell|profiles|env|automationProfile|defaultProfile)[^"]*|typescript\.tsdk|'
-    r'js/ts\.tsdk|eslint\.runtime|eslint\.nodePath|eslint\.execArgv|prettier\.prettierPath|npm\.packageManager|'
-    r'npm\.scriptRunner|python\.defaultInterpreterPath|python\.pythonPath|git\.path|[\w.]*executablePath|'
-    r'[\w.]*\.serverPath|[\w.]*\.binPath|[\w.]*\.command|task\.allowAutomaticTasks|security\.workspace\.trust[^"]*)"\s*:'
-)
-
-STRONG = (
-    ("known-malware", re.compile("|".join(re.escape(s) for s in KNOWN_STRINGS)), "high", "high"),
-    ("obfuscated-code", re.compile(r"\b_0x[0-9a-f]{4,6}\b"), "high", "medium"),
-    ("exfil-endpoint", re.compile(r"api\.telegram\.org/bot|discord(?:app)?\.com/api/webhooks|pastebin\.com/raw|hastebin|transfer\.sh|webhook\.site|requestbin|pipedream\.net|ngrok-free\.app|\.ngrok\.io|interact\.sh|\boast\.(?:fun|live|me|site|online|pro)|burpcollaborator|canarytokens|ipinfo\.io|ip-api\.com|ifconfig\.me|icanhazip|api\.ipify\.org"), "high", "medium"),
-    ("wallet-extension-id", re.compile(r"nkbihfbeogaeaoehlefnkodbefgpgknn|bfnaelmomeimhlpmgjnjophhpkkoljpa|hnfanknocfeofbddgcijnmhnfnkdnaad|ibnejdfjmmkpcnlpebklmnkoeoihofec|fhbohimaelbohpjbbldcngcnapndodjp|aholpfdialjgjfhomihkjbmgjidlcdno|ejbalbakoplchlghecdalmeeeajnimhm|egjidjbpglichdcondbcbdnbeeppgdph|dmkamcknogkgcdfhhbddcghachkejeap|aeachknmefphepccionboohckonoeemg"), "high", "high"),
-    ("browser-secrets", re.compile(r"Login Data|Local State|Local Extension Settings|Web Data|/Cookies\b|\\\\Cookies\b|BraveSoftware|google-chrome|Opera Software|\.mozilla/firefox|key4\.db|logins\.json|Chrome/User Data"), "high", "medium"),
-    ("app-secrets", re.compile(r"\.ssh/id_|\bid_rsa\b|\bid_ed25519\b|\.aws/credentials|\.config/solana|Exodus|Electrum|\.gnupg|\.docker/config\.json|\.kube/config|\.config/gh/hosts|\.git-credentials|Keychains|login\.keychain|\.netrc\b"), "high", "info"),
-    ("download-and-run", re.compile(r"curl[^\n]{0,120}\|\s*(?:ba|z)?sh|wget[^\n]{0,120}\|\s*(?:ba|z)?sh|Invoke-WebRequest|Invoke-Expression|\bIEX\s*\(|powershell(?:\.exe)?\s+-(?:e|enc|encodedcommand|nop|w|windowstyle|ExecutionPolicy)\b|DownloadString|certutil(?:\.exe)?\s+-urlcache|\bmshta\b|bitsadmin|/dev/tcp/"), "high", "medium"),
-    ("starts-at-login", re.compile(r"systemctl\s+--user|\.config/autostart|\.config/systemd/user|crontab\s+-|\bLaunchAgents\b|\bLaunchDaemons\b|CurrentVersion\\\\Run|\bschtasks\b|Start Menu\\\\Programs\\\\Startup|reg(?:\.exe)?\s+add\s+HKCU"), "high", "medium"),
-    ("bidi-control", re.compile("[‪-‮⁦-⁩]"), "high", "high"),
-    ("invisible-code", re.compile("(?:[​-‏⁠-⁤︀-️\U000e0000-\U000e007f\U000e0100-\U000e01ef]){8,}"), "high", "high"),
-    ("hidden-after-spaces", re.compile(r"\S[ \t]{150,}\S"), "medium", "info"),
-    ("dumps-env", re.compile(r"JSON\.stringify\(\s*process\.env\s*\)|Object\.(?:entries|keys)\(\s*process\.env\s*\)|os\.environ\.copy\(\)|dict\(os\.environ\)"), "medium", "info"),
-    ("public-ip", re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?::\d{2,5})?(?![\w.])"), "medium", "info"),
-)
-SOURCE_ONLY = (
-    ("eval", re.compile(r"(?<![\w.$])eval\s*\("), "medium"),
-    ("new-function", re.compile(r"new\s+Function\s*\("), "medium"),
-    ("shell-commands", re.compile(r"child_process|\bexecSync\b|\bspawnSync\b|\bexecFile(?:Sync)?\b|\bspawn\s*\(|\bsubprocess\.|\bos\.system\("), "medium"),
-    ("decodes-base64", re.compile(r"\batob\s*\(|Buffer\.from\([^)]{0,200}['\"](?:base64|hex)['\"]|b64decode|String\.fromCharCode\s*\(|\.charCodeAt\([^)]*\)\s*\^"), "info"),
-    ("base64-blob", re.compile(r"[A-Za-z0-9+/]{400,}={0,2}"), "medium"),
-    ("hex-blob", re.compile(r"(?:\\x[0-9a-fA-F]{2}){40,}|(?:0x[0-9a-fA-F]{2},\s*){60,}"), "medium"),
-    ("home-folder", re.compile(r"os\.homedir\(\)|\bhomedir\(\)|process\.env\.(?:HOME|USERPROFILE|APPDATA|LOCALAPPDATA)\b|expanduser\("), "info"),
-    ("network-call", re.compile(r"\bfetch\s*\(|\baxios\b|https?\.(?:get|request)\s*\(|new\s+WebSocket|net\.(?:connect|createConnection|Socket)|dgram\.|XMLHttpRequest|require\(['\"](?:node:)?(?:http|https|net|dgram|tls)['\"]\)|\brequests\.(?:get|post)\(|urllib\.request|socket\.socket\("), "info"),
-    ("dynamic-load", re.compile(r"require\(\s*(?![\'\"`)\s])[^)]{1,80}\)|import\(\s*(?![\'\"`)\s])[^)]{1,80}\)|__import__\(|importlib\.import_module\("), "info"),
-    ("self-hiding", re.compile(r"unlinkSync\(\s*__filename|fs\.rm(?:Sync)?\(\s*__dirname|detached\s*:\s*true|\.unref\(\)\s*;?\s*$|windowsHide\s*:\s*true"), "medium"),
-)
-IMPORT_RE = re.compile(r"""(?:\brequire\s*\(\s*|\bimport\s*\(\s*|\bfrom\s+|^\s*import\s+)['"]([^'"\s]+)['"]""", re.M)
-TEXT_EXT = {
-    ".js", ".cjs", ".mjs", ".ts", ".cts", ".mts", ".jsx", ".tsx", ".json", ".jsonc", ".json5", ".sh", ".bash", ".zsh",
-    ".fish", ".ps1", ".psm1", ".bat", ".cmd", ".vbs", ".py", ".pth", ".rb", ".php", ".pl", ".yml", ".yaml", ".toml", ".ini",
-    ".cfg", ".html", ".htm", ".vue", ".svelte", ".astro", ".css", ".scss", ".sass", ".less", ".env", ".lua", ".go", ".rs",
-    ".java", ".kt", ".swift", ".c", ".h", ".cpp", ".cs", ".sql", ".graphql", ".gql", ".xml", ".svg", ".md", ".mdx", ".txt",
-}
-CODE_EXT = TEXT_EXT - {".md", ".mdx", ".txt", ".svg", ".xml", ".css", ".scss", ".sass", ".less"}
-WIN_EXT = {".exe", ".dll", ".scr", ".bat", ".cmd", ".ps1", ".psm1", ".vbs", ".vbe", ".jse", ".wsf", ".wsh", ".hta", ".lnk", ".msi", ".msp", ".reg", ".com", ".pif", ".cpl", ".jar"}
-PREBUILT_OK = re.compile(
-    r"node_modules/(?:\.pnpm/[^/]+/node_modules/)?(?:@esbuild|esbuild|@next/swc|@swc|lightningcss|@rollup|@img|sharp|turbo|"
-    r"@biomejs|@oxc|oxc|@tailwindcss/oxide|@parcel/watcher|fsevents|@unrs|unrs|@napi-rs|@rspack|@rolldown|rolldown|"
-    r"@ast-grep|bufferutil|utf-8-validate|canvas|better-sqlite3|bcrypt|argon2|@prisma|prisma|@node-rs|node-gyp|"
-    r"playwright-core|puppeteer|@playwright|electron|7zip-bin|@ngrok|cypress|workerd|@cloudflare|@oven|bun|lefthook|"
-    r"@lefthook|@sentry/cli|@sentry|@vercel/nft|@ffmpeg-installer|ffmpeg-static|@esbuild-kit|@dprint|dprint|"
-    r"@lancedb|onnxruntime-node|@tensorflow|re2|@mapbox/node-pre-gyp|deasync|nodejieba|@resvg|@sveltejs|@vscode|"
-    r"@ampproject|@lmdb|lmdb|msgpackr-extract|@msgpackr-extract|cpu-features|ssh2|@serialport|serialport|usb|"
-    r"keytar|node-pty|@homebridge|sqlite3|@libsql|libsql|@duckdb|duckdb|@tauri-apps|@astrojs/compiler|svelte|"
-    r"@typescript/native-preview|typescript-go|@rolldown/binding|@oxlint|oxlint|nodemon|@esbuild/[\w-]+|@swc/core-[\w-]+)"
-)
-PACKED_DIRS = ("/dist/", "/build/", "/umd/", "/cjs/", "/esm/", "/lib/", "/bundle/", "/min/", "/vendor/", "/public/", "/static/", "/out/", "/.next/")
-MAX_FILE = 15_000_000
-CAP_PER_FILE = 3
-CAP_PROJECT = 80
-CAP_NM = 40
-
-
-def magic(path):
-    try:
-        with open(path, "rb") as f:
-            head = f.read(4)
-    except OSError:
-        return None
-    if head == b"\x7fELF":
-        return "Linux program (ELF)"
-    if head[:2] == b"MZ":
-        return "Windows program (PE)"
-    if head in (b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xce"):
-        return "Mac program (Mach-O)"
-    if head == b"\x00asm":
-        return "WebAssembly module"
-    return None
-
-
-def snippet(line, m):
-    s = max(0, m.start() - 60)
-    e = min(len(line), m.end() + 60)
-    t = line[s:e].replace("\t", " ")
-    t = "".join(ch if ch.isprintable() else f"\\u{ord(ch):04x}" for ch in t)
-    return ("..." if s else "") + t + ("..." if e < len(line) else "")
-
-
-def code_like(line):
-    if re.search(r"_0x[0-9a-f]{4}|\beval\s*\(|new Function|\\x[0-9a-f]{2}\\x|atob\(|fromCharCode|require\(|import\(", line):
-        return True
-    marks = line.count(";") + line.count("{") + line.count("=>") + line.count("function")
-    return marks * 120 > len(line)
-
-
-def public_ip(token):
-    ip = token.split(":")[0]
-    try:
-        a = ipaddress.ip_address(ip)
-    except ValueError:
-        return False
-    if a.is_loopback or a.is_private or a.is_unspecified or a.is_multicast or a.is_reserved or a.is_link_local:
-        return False
-    parts = [int(x) for x in ip.split(".")]
-    return not (parts[0] == 0 or all(p < 10 for p in parts) or parts == [255, 255, 255, 255])
-
-
-def mask_tokens(s):
-    return re.sub(r"(_authToken\s*=\s*|_auth\s*=\s*|_password\s*=\s*|npmAuthToken:\s*|//[^\s:]+:_authToken=)(\S{4})\S+", r"\1\2****", s)
-
-
-def package_of(spec):
-    if spec.startswith((".", "/", "node:", "#", "~", "@/", "virtual:", "data:", "http:", "https:", "bun:")):
-        return None
-    if spec.startswith("@"):
-        parts = spec.split("/")
-        return "/".join(parts[:2]) if len(parts) >= 2 else None
-    return spec.split("/")[0] or None
 
 
 class Scan:
@@ -500,78 +376,3 @@ def scan(root):
         raise NotADirectoryError(str(root))
     s.walk()
     return s.result()
-
-
-def render(r):
-    out = [f"# Static scan of {r['root']}"]
-    st = r["stats"]
-    out.append(
-        f"files: {st.get('project files', 0)} in the project, {st.get('node_modules files', 0)} in node_modules "
-        f"({st.get('packages in node_modules', 0)} packages)"
-    )
-    out.append("findings: " + ", ".join(f"{r['counts'][s]} {s}" for s in SEVERITIES))
-    out.append("")
-    out.append("## Files that can run code without you starting them")
-    if not r["autorun"]:
-        out.append("  none")
-    for a in r["autorun"]:
-        loads = f" | loads: {', '.join(a['loads'])}" if a["loads"] else ""
-        out.append(f"  [{a['severity']}] {a['file']}: {a['why']}{loads}")
-    if r["npmrc"]:
-        out.append("")
-        out.append("## Package manager settings (tokens masked)")
-        for n in r["npmrc"]:
-            out.append(f"  --- {n['file']}")
-            out.extend(f"      {line}" for line in n["content"].splitlines()[:25])
-    out.append("")
-    out.append("## Project scripts")
-    proj = [s for s in r["scripts"] if not s["in_node_modules"]]
-    if not proj:
-        out.append("  none")
-    for s in proj:
-        out.append(f"  --- {s['file']}")
-        for k, v in s["scripts"].items():
-            mark = " (runs on install)" if k in LIFECYCLE else ""
-            out.append(f"     {k}{mark}: {v[:200]}")
-    nm = [s for s in r["scripts"] if s["in_node_modules"]]
-    if nm:
-        out.append(f"  install scripts inside node_modules: {len(nm)}")
-        for s in nm[:40]:
-            out.append(f"     {s['file']}: " + "; ".join(f"{k}={v[:120]}" for k, v in s["scripts"].items()))
-    by = defaultdict(list)
-    for f in r["findings"]:
-        by[f["severity"]].append(f)
-    for sev in SEVERITIES:
-        if not by[sev]:
-            continue
-        out.append("")
-        out.append(f"## {sev.upper()} ({len(by[sev])})")
-        for f in by[sev]:
-            where = f"{f['file']}:{f['line']}" if f["line"] else f["file"]
-            nm_tag = " [node_modules]" if f["in_node_modules"] else ""
-            snip = f"  {f['snippet']}" if f["snippet"] else ""
-            what = f["what"] if not f["snippet"] else f["kind"]
-            out.append(f"  - {where}{nm_tag}: {what}{snip}")
-    out.append("")
-    out.append("Read every file under 'Files that can run code' before running anything.")
-    return "\n".join(out)
-
-
-def main(argv=None):
-    p = argparse.ArgumentParser(prog="scan.py", description="Static scan of a project. Runs nothing.")
-    p.add_argument("project", help="project folder")
-    p.add_argument("--json", action="store_true", help="print JSON")
-    a = p.parse_args(argv)
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(errors="backslashreplace")
-    try:
-        r = scan(a.project)
-    except NotADirectoryError:
-        print(f"scan.py: not a folder: {a.project}", file=sys.stderr)
-        return 2
-    print(json.dumps(r, indent=2) if a.json else render(r))
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

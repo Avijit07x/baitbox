@@ -7,11 +7,13 @@ description: Check an untrusted project (zip, tar, folder or git URL) for malwar
 
 Background: config files are code. A real attack hid in a fake Tailwind plugin, `tw-motion-css`. It ran as soon as VS Code's Tailwind extension or `next dev` loaded `tailwind.config.js`, called `216.126.231.70:1224`, and installed hidden startup services. It used no install script, so `--ignore-scripts` and `npm audit` would not have stopped it.
 
-The tool lives in `~/.claude/skills/baitbox/scripts/`. Call it as:
+The skill uses the `baitbox` command from the user's PATH. Call it as:
 
 ```bash
-B="python3 -I $HOME/.claude/skills/baitbox/scripts/baitbox.py"
+B=baitbox
 ```
+
+If the shell says `baitbox: command not found`, tell the user to install BaitBox first (README, "Install") and stop.
 
 ## Ground rules
 

@@ -2,7 +2,8 @@ import json
 
 import pytest
 
-import deps
+from baitbox import deps
+from baitbox.deps import collector, registry, specs
 from conftest import write
 
 
@@ -17,7 +18,7 @@ class FakeHttp:
         for prefix, resp in self.gets.items():
             if url == prefix:
                 return resp
-        if url.startswith(deps.DOWNLOADS):
+        if url.startswith(registry.DOWNLOADS):
             return 200, {"downloads": 10_000_000}
         return 404, None
 
@@ -36,7 +37,7 @@ def iso(days_ago):
 
 
 def collect(root):
-    c = deps.Collector(root)
+    c = collector.Collector(root)
     c.walk()
     return c
 
@@ -120,12 +121,12 @@ def test_manifest_specs(tmp_path):
 
 @pytest.mark.parametrize("name", ["../../etc/passwd", "a b", "x?y", "", "@scope/", "A" * 300, "@Scope/x", "a/../b"])
 def test_invalid_names(name):
-    assert not deps.valid_name(name)
+    assert not specs.valid_name(name)
 
 
 @pytest.mark.parametrize("name", ["react", "@babel/core", "JSONStream", "lodash.merge", "@a/b-c_d"])
 def test_valid_names(name):
-    assert deps.valid_name(name)
+    assert specs.valid_name(name)
 
 
 def test_invalid_lockfile_name_is_high(tmp_path):
@@ -147,8 +148,8 @@ def test_node_modules_name_mismatch_and_extras(tmp_path):
 def test_throwaway_package_is_high(tmp_path):
     write(tmp_path, "package.json", json.dumps({"dependencies": {"tw-fake": "^2.0.0"}}))
     http = FakeHttp(gets={
-        f"{deps.DOWNLOADS}/tw-fake": (200, {"downloads": 12}),
-        f"{deps.REGISTRY}/tw-fake": (200, {"time": {"created": iso(6), "2.0.2": iso(6)}, "versions": {"2.0.2": {}}, "dist-tags": {"latest": "2.0.2"}, "maintainers": [{"email": "x@proton.me"}]}),
+        f"{registry.DOWNLOADS}/tw-fake": (200, {"downloads": 12}),
+        f"{registry.REGISTRY}/tw-fake": (200, {"time": {"created": iso(6), "2.0.2": iso(6)}, "versions": {"2.0.2": {}}, "dist-tags": {"latest": "2.0.2"}, "maintainers": [{"email": "x@proton.me"}]}),
     })
     r = deps.check(tmp_path, http=http)
     p = r["packages"][0]
@@ -157,11 +158,11 @@ def test_throwaway_package_is_high(tmp_path):
 
 def test_not_on_npm_and_private_registry(tmp_path):
     write(tmp_path, "a/package.json", json.dumps({"dependencies": {"@codentra/postcss-kinetix": "^1.0.1"}}))
-    r = deps.check(tmp_path / "a", http=FakeHttp(gets={f"{deps.DOWNLOADS}/@codentra/postcss-kinetix": (404, None)}))
+    r = deps.check(tmp_path / "a", http=FakeHttp(gets={f"{registry.DOWNLOADS}/@codentra/postcss-kinetix": (404, None)}))
     assert r["packages"][0]["flags"][0]["code"] == "NOT_ON_NPM"
     write(tmp_path, "b/package.json", json.dumps({"dependencies": {"@corp/ui": "^1.0.0"}}))
     write(tmp_path, "b/.npmrc", "@corp:registry=https://npm.corp.example/\n")
-    r = deps.check(tmp_path / "b", http=FakeHttp(gets={f"{deps.DOWNLOADS}/@corp/ui": (404, None)}))
+    r = deps.check(tmp_path / "b", http=FakeHttp(gets={f"{registry.DOWNLOADS}/@corp/ui": (404, None)}))
     assert r["packages"][0]["flags"][0]["code"] == "PRIVATE_REGISTRY"
 
 
@@ -170,9 +171,9 @@ def test_security_placeholder_and_osv_malware(tmp_path):
     write(tmp_path, "package-lock.json", json.dumps({"packages": {"node_modules/chalk": {"version": "5.6.1"}}}))
     http = FakeHttp(
         gets={
-            f"{deps.DOWNLOADS}/tw-motion-css": (200, {"downloads": 500}),
-            f"{deps.REGISTRY}/tw-motion-css": (200, {"time": {"created": iso(400)}, "versions": {"0.0.1-security": {}}, "dist-tags": {"latest": "0.0.1-security"}}),
-            f"{deps.REGISTRY}/chalk/5.6.1": (200, {"name": "chalk", "version": "5.6.1"}),
+            f"{registry.DOWNLOADS}/tw-motion-css": (200, {"downloads": 500}),
+            f"{registry.REGISTRY}/tw-motion-css": (200, {"time": {"created": iso(400)}, "versions": {"0.0.1-security": {}}, "dist-tags": {"latest": "0.0.1-security"}}),
+            f"{registry.REGISTRY}/chalk/5.6.1": (200, {"name": "chalk", "version": "5.6.1"}),
         },
         osv={("chalk", "5.6.1"): [{"id": "MAL-2025-46969"}]},
     )
@@ -184,7 +185,7 @@ def test_security_placeholder_and_osv_malware(tmp_path):
 
 def test_popular_version_removed_from_npm(tmp_path):
     write(tmp_path, "package-lock.json", json.dumps({"packages": {"node_modules/debug": {"version": "4.4.2"}}}))
-    http = FakeHttp(gets={f"{deps.REGISTRY}/debug/4.4.2": (404, None)})
+    http = FakeHttp(gets={f"{registry.REGISTRY}/debug/4.4.2": (404, None)})
     r = deps.check(tmp_path, http=http)
     assert any(f["code"] == "VERSION_NOT_ON_NPM" for f in r["packages"][0]["flags"])
 
@@ -192,9 +193,9 @@ def test_popular_version_removed_from_npm(tmp_path):
 def test_lookalike_name(tmp_path):
     write(tmp_path, "package.json", json.dumps({"dependencies": {"reqeusts": "1.0.0", "axois": "1.0.0", "react-dom": "18"}}))
     http = FakeHttp(gets={
-        f"{deps.DOWNLOADS}/reqeusts": (200, {"downloads": 3}), f"{deps.DOWNLOADS}/axois": (200, {"downloads": 3}),
-        f"{deps.REGISTRY}/reqeusts": (200, {"time": {"created": iso(900)}, "versions": {"1": {}, "2": {}, "3": {}}, "dist-tags": {}}),
-        f"{deps.REGISTRY}/axois": (200, {"time": {"created": iso(900)}, "versions": {"1": {}, "2": {}, "3": {}}, "dist-tags": {}}),
+        f"{registry.DOWNLOADS}/reqeusts": (200, {"downloads": 3}), f"{registry.DOWNLOADS}/axois": (200, {"downloads": 3}),
+        f"{registry.REGISTRY}/reqeusts": (200, {"time": {"created": iso(900)}, "versions": {"1": {}, "2": {}, "3": {}}, "dist-tags": {}}),
+        f"{registry.REGISTRY}/axois": (200, {"time": {"created": iso(900)}, "versions": {"1": {}, "2": {}, "3": {}}, "dist-tags": {}}),
     })
     r = deps.check(tmp_path, http=http)
     names = {x["name"] for x in r["lookalikes"]}
@@ -204,8 +205,8 @@ def test_lookalike_name(tmp_path):
 def test_install_script_flag(tmp_path):
     write(tmp_path, "package-lock.json", json.dumps({"packages": {"node_modules/small": {"version": "1.0.0"}}}))
     http = FakeHttp(gets={
-        f"{deps.DOWNLOADS}/small": (200, {"downloads": 2000}),
-        f"{deps.REGISTRY}/small": (200, {"time": {"created": iso(900), "1.0.0": iso(900)}, "versions": {"1.0.0": {"scripts": {"postinstall": "node x.js"}}, "0.9.0": {}, "0.8.0": {}}, "dist-tags": {"latest": "1.0.0"}}),
+        f"{registry.DOWNLOADS}/small": (200, {"downloads": 2000}),
+        f"{registry.REGISTRY}/small": (200, {"time": {"created": iso(900), "1.0.0": iso(900)}, "versions": {"1.0.0": {"scripts": {"postinstall": "node x.js"}}, "0.9.0": {}, "0.8.0": {}}, "dist-tags": {"latest": "1.0.0"}}),
     })
     r = deps.check(tmp_path, http=http)
     assert any(f["code"] == "INSTALL_SCRIPT" and f["severity"] == "medium" for f in r["packages"][0]["flags"])
@@ -220,9 +221,9 @@ def test_http_retries_then_gives_up(monkeypatch):
         calls.append(1)
         raise urllib.error.URLError("down")
 
-    monkeypatch.setattr(deps.urllib.request, "urlopen", boom)
-    monkeypatch.setattr(deps.time, "sleep", lambda s: None)
-    st, data = deps.Http(retries=3).get("https://example.invalid/x")
+    monkeypatch.setattr(registry.urllib.request, "urlopen", boom)
+    monkeypatch.setattr(registry.time, "sleep", lambda s: None)
+    st, data = registry.Http(retries=3).get("https://example.invalid/x")
     assert st == 0 and len(calls) == 3
 
 
@@ -245,8 +246,8 @@ def test_pnpm_store_orphans_are_not_flagged(tmp_path):
 def test_prepare_script_is_not_an_install_script(tmp_path):
     write(tmp_path, "package-lock.json", json.dumps({"packages": {"node_modules/p": {"version": "1.0.0"}}}))
     http = FakeHttp(gets={
-        f"{deps.DOWNLOADS}/p": (200, {"downloads": 2000}),
-        f"{deps.REGISTRY}/p": (200, {"time": {"created": iso(900)}, "versions": {"1.0.0": {"scripts": {"prepare": "tsc"}}, "0.9.0": {}, "0.8.0": {}}, "dist-tags": {"latest": "1.0.0"}}),
+        f"{registry.DOWNLOADS}/p": (200, {"downloads": 2000}),
+        f"{registry.REGISTRY}/p": (200, {"time": {"created": iso(900)}, "versions": {"1.0.0": {"scripts": {"prepare": "tsc"}}, "0.9.0": {}, "0.8.0": {}}, "dist-tags": {"latest": "1.0.0"}}),
     })
     r = deps.check(tmp_path, http=http)
     assert not any(f["code"] == "INSTALL_SCRIPT" for f in r["packages"][0]["flags"])

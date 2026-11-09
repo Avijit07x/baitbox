@@ -25,7 +25,7 @@ python3 -m venv .venv
 .venv/bin/pip install pytest ruff shellcheck-py
 .venv/bin/python -m pytest -q
 .venv/bin/ruff check .
-.venv/bin/shellcheck skills/baitbox/scripts/box.sh bin/baitbox
+.venv/bin/shellcheck src/baitbox/sandbox/box.sh bin/baitbox
 bin/baitbox selftest
 ```
 
@@ -33,7 +33,7 @@ The sandbox tests need `bubblewrap`, `strace` and Node.js, and are skipped when 
 
 ## Code rules
 
-- **Standard library only.** The scripts must run with a plain `python3` and `bash`, with nothing to install.
+- **Standard library only.** BaitBox must run with a plain `python3` and `bash`, with nothing to install.
 - **No code comments.** Use clear names and small functions. Put the reasoning in the commit message or the pull request.
 - **Every new detection needs a test**: one that shows it fires, and one that shows a normal project does not trigger it.
 - **Keep findings plain.** A finding says what the code did, in words a busy developer can read in one second.
@@ -46,17 +46,25 @@ The sandbox tests need `bubblewrap`, `strace` and Node.js, and are skipped when 
 ## Project layout
 
 ```
-bin/baitbox                      command-line entry point
-skills/baitbox/SKILL.md          Claude Code skill
-skills/baitbox/scripts/
-  baitbox.py                     check, doctor, selftest
-  extract.py                     safe unpacking and cloning
-  scan.py                        static scan
-  deps.py                        npm registry and OSV checks
-  box.sh                         bubblewrap + strace sandbox
-  analyze.py                     reads sandbox recordings
-tests/                           pytest suite
+bin/baitbox                command-line entry point
+skills/baitbox/SKILL.md    Claude Code skill
+src/baitbox/
+  cli.py                   reads the command line and runs a command
+  commands/                one file per command: check, doctor, selftest, scan, deps, analyze, box
+  unpack/                  step 1: safe unpacking and cloning
+  scan/                    step 2: static scan
+  deps/                    step 3: npm registry and OSV checks
+  sandbox/                 steps 4 and 5: install and run plans, and box.sh (bubblewrap + strace)
+  analyze/                 reads sandbox recordings
+  report/                  findings, verdict and report.md
+tests/                     one test file per folder in src/baitbox
 ```
+
+Each folder in `src/baitbox` is one part of the check:
+
+- `rules.py` holds its patterns and lists, and `output.py` turns its results into text;
+- `__init__.py` lists what other parts may use. Code in other folders imports from there, not from the files inside;
+- a new command is a new file in `commands/`, plus one line in `cli.py`.
 
 ## Pull requests
 

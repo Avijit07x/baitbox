@@ -6,7 +6,8 @@ import zipfile
 
 import pytest
 
-import extract
+from baitbox import unpack
+from baitbox.unpack import archive, git
 from conftest import write
 
 
@@ -41,7 +42,7 @@ def test_zip_normal_files_and_permissions(tmp_path):
         ("proj/run.sh", b"echo hi", stat.S_IFREG | 0o4755),
         ("proj/src/", b"", stat.S_IFDIR | 0o755),
     ])
-    info = extract.intake(str(z), tmp_path / "out")
+    info = unpack.intake(str(z), tmp_path / "out")
     root = tmp_path / "out" / "proj"
     assert info["project_root"] == str(root)
     assert (root / "package.json").read_text() == "{}"
@@ -56,7 +57,7 @@ def test_zip_normal_files_and_permissions(tmp_path):
 def test_zip_rejects_unsafe_paths(tmp_path, name):
     z = tmp_path / "p.zip"
     make_zip(z, [(name, b"x", stat.S_IFREG | 0o644), ("ok.txt", b"ok", stat.S_IFREG | 0o644)])
-    info = extract.intake(str(z), tmp_path / "out")
+    info = unpack.intake(str(z), tmp_path / "out")
     assert (tmp_path / "out" / "ok.txt").exists()
     assert not (tmp_path / "evil.txt").exists()
     assert any("unsafe path" in s["reason"] for s in info["skipped"])
@@ -65,7 +66,7 @@ def test_zip_rejects_unsafe_paths(tmp_path, name):
 def test_zip_symlink_entry_is_not_created(tmp_path):
     z = tmp_path / "p.zip"
     make_zip(z, [("link", b"/home/user/.ssh/id_ed25519", stat.S_IFLNK | 0o777)])
-    info = extract.intake(str(z), tmp_path / "out")
+    info = unpack.intake(str(z), tmp_path / "out")
     assert not os.path.lexists(tmp_path / "out" / "link")
     assert info["skipped"][0]["reason"].startswith("symlink")
 
@@ -78,33 +79,33 @@ def test_zip_duplicate_entries_keep_first(tmp_path):
         warnings.simplefilter("ignore")
         zf.writestr("a.txt", "first")
         zf.writestr("a.txt", "second")
-    info = extract.intake(str(z), tmp_path / "out")
+    info = unpack.intake(str(z), tmp_path / "out")
     assert (tmp_path / "out" / "a.txt").read_text() == "first"
     assert any("duplicate" in s["reason"] for s in info["skipped"])
 
 
 def test_zip_bomb_ratio_is_refused(tmp_path, monkeypatch):
-    monkeypatch.setattr(extract, "RATIO_MIN_BYTES", 1000)
+    monkeypatch.setattr(archive, "RATIO_MIN_BYTES", 1000)
     z = tmp_path / "bomb.zip"
     with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("zeros.bin", b"\0" * 5_000_000)
-    with pytest.raises(extract.IntakeError, match="zip bomb"):
-        extract.intake(str(z), tmp_path / "out")
+    with pytest.raises(unpack.IntakeError, match="zip bomb"):
+        unpack.intake(str(z), tmp_path / "out")
 
 
 def test_zip_total_size_limit(tmp_path, monkeypatch):
-    monkeypatch.setattr(extract, "MAX_TOTAL_BYTES", 10)
+    monkeypatch.setattr(archive, "MAX_TOTAL_BYTES", 10)
     z = tmp_path / "big.zip"
     with zipfile.ZipFile(z, "w") as zf:
         zf.writestr("a.txt", "0123456789abcdef")
-    with pytest.raises(extract.IntakeError):
-        extract.intake(str(z), tmp_path / "out")
+    with pytest.raises(unpack.IntakeError):
+        unpack.intake(str(z), tmp_path / "out")
 
 
 def test_zip_ignores_macosx_folder(tmp_path):
     z = tmp_path / "p.zip"
     make_zip(z, [("__MACOSX/._a", b"x", stat.S_IFREG | 0o644), ("proj/a.js", b"1", stat.S_IFREG | 0o644)])
-    info = extract.intake(str(z), tmp_path / "out")
+    info = unpack.intake(str(z), tmp_path / "out")
     assert info["project_root"].endswith("proj")
     assert not (tmp_path / "out" / "__MACOSX").exists()
 
@@ -120,7 +121,7 @@ def test_tar_rejects_links_devices_and_traversal(tmp_path):
         tar_member("proj/dev", tarfile.CHRTYPE),
         tar_member("../escape.txt", data=b"x"),
     ])
-    info = extract.intake(str(t), tmp_path / "out")
+    info = unpack.intake(str(t), tmp_path / "out")
     root = tmp_path / "out" / "proj"
     assert (root / "a.js").read_text() == "1"
     assert os.readlink(root / "inside") == "a.js"
@@ -142,7 +143,7 @@ def test_folder_copy_skips_outside_links_and_sockets(tmp_path):
     s = socket.socket(socket.AF_UNIX)
     s.bind(str(sock_path))
     try:
-        info = extract.intake(str(src), tmp_path / "out")
+        info = unpack.intake(str(src), tmp_path / "out")
     finally:
         s.close()
     out = tmp_path / "out"
@@ -155,28 +156,28 @@ def test_folder_copy_skips_outside_links_and_sockets(tmp_path):
 
 def test_folder_copy_refuses_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    with pytest.raises(extract.IntakeError, match="home folder"):
-        extract.intake(str(tmp_path), tmp_path / "x" / "out")
+    with pytest.raises(unpack.IntakeError, match="home folder"):
+        unpack.intake(str(tmp_path), tmp_path / "x" / "out")
 
 
 def test_folder_copy_refuses_output_inside_source(tmp_path):
     src = tmp_path / "src"
     write(src, "a.js", "1")
-    with pytest.raises(extract.IntakeError, match="inside the project"):
-        extract.intake(str(src), src / "check" / "out")
+    with pytest.raises(unpack.IntakeError, match="inside the project"):
+        unpack.intake(str(src), src / "check" / "out")
 
 
 def test_single_file(tmp_path):
     f = write(tmp_path, "payload.js", "console.log(1)")
-    info = extract.intake(str(f), tmp_path / "out")
+    info = unpack.intake(str(f), tmp_path / "out")
     assert (tmp_path / "out" / "payload.js").exists()
     assert info["kind"] == "file"
 
 
 def test_unsupported_archive(tmp_path):
     f = write(tmp_path, "a.7z", b"7z\xbc\xaf\x27\x1c" + b"\0" * 32)
-    with pytest.raises(extract.IntakeError, match="not supported"):
-        extract.intake(str(f), tmp_path / "out")
+    with pytest.raises(unpack.IntakeError, match="not supported"):
+        unpack.intake(str(f), tmp_path / "out")
 
 
 @pytest.mark.parametrize("url", [
@@ -184,14 +185,14 @@ def test_unsupported_archive(tmp_path):
     "https://host/repo with space", "git://host/repo", "ssh://-oProxyCommand=x/repo",
 ])
 def test_git_url_validation_rejects(tmp_path, url):
-    it = extract.Intake(tmp_path)
-    with pytest.raises(extract.IntakeError):
-        extract.clone(url, it)
+    it = archive.Intake(tmp_path)
+    with pytest.raises(unpack.IntakeError):
+        git.clone(url, it)
 
 
 @pytest.mark.parametrize("url", ["https://github.com/a/b.git", "git@github.com:a/b.git", "ssh://git@github.com/a/b"])
 def test_git_url_validation_accepts(url):
-    assert extract.GIT_URL_RE.match(url)
+    assert git.GIT_URL_RE.match(url)
 
 
 @pytest.mark.parametrize("source,url,branch", [
@@ -210,15 +211,15 @@ def test_git_url_validation_accepts(url):
     ("https://git.example.com/a/b.git", "https://git.example.com/a/b.git", None),
 ])
 def test_normalize_git_url(source, url, branch):
-    assert extract.normalize_git_url(source) == (url, branch)
+    assert git.normalize_git_url(source) == (url, branch)
 
 
 def test_is_git_url(tmp_path):
-    assert extract.is_git_url("github.com/a/b")
-    assert extract.is_git_url("git@github.com:a/b.git")
-    assert not extract.is_git_url(str(tmp_path))
-    assert not extract.is_git_url("project.zip")
-    assert extract.repo_name("https://github.com/a/my-app/tree/dev") == "my-app"
+    assert unpack.is_git_url("github.com/a/b")
+    assert unpack.is_git_url("git@github.com:a/b.git")
+    assert not unpack.is_git_url(str(tmp_path))
+    assert not unpack.is_git_url("project.zip")
+    assert unpack.repo_name("https://github.com/a/my-app/tree/dev") == "my-app"
 
 
 def test_clone_command_is_locked_down(tmp_path, monkeypatch):
@@ -235,9 +236,9 @@ def test_clone_command_is_locked_down(tmp_path, monkeypatch):
             stdout = stderr = ""
         return P()
 
-    monkeypatch.setattr(extract.subprocess, "run", fake_run)
-    monkeypatch.setattr(extract.shutil, "which", lambda x: "/usr/bin/git")
-    info = extract.clone("https://github.com/a/b/tree/dev", extract.Intake(tmp_path))
+    monkeypatch.setattr(git.subprocess, "run", fake_run)
+    monkeypatch.setattr(git.shutil, "which", lambda x: "/usr/bin/git")
+    info = git.clone("https://github.com/a/b/tree/dev", archive.Intake(tmp_path))
     cmd = seen["cmd"]
     assert info == {"url": "https://github.com/a/b.git", "branch": "dev"}
     assert cmd[cmd.index("--") + 1] == "https://github.com/a/b.git"
@@ -253,15 +254,15 @@ def test_clone_failure_mentions_login(tmp_path, monkeypatch):
         stdout = ""
         stderr = "fatal: could not read Username for 'https://github.com'"
 
-    monkeypatch.setattr(extract.subprocess, "run", lambda cmd, **kw: P())
-    monkeypatch.setattr(extract.shutil, "which", lambda x: "/usr/bin/git")
-    with pytest.raises(extract.IntakeError, match="gh auth login"):
-        extract.clone("https://github.com/a/private", extract.Intake(tmp_path))
+    monkeypatch.setattr(git.subprocess, "run", lambda cmd, **kw: P())
+    monkeypatch.setattr(git.shutil, "which", lambda x: "/usr/bin/git")
+    with pytest.raises(unpack.IntakeError, match="gh auth login"):
+        git.clone("https://github.com/a/private", archive.Intake(tmp_path))
 
 
 def test_bad_branch_is_refused(tmp_path):
-    with pytest.raises(extract.IntakeError, match="branch"):
-        extract.clone("https://github.com/a/b/tree/--upload-pack=x", extract.Intake(tmp_path))
+    with pytest.raises(unpack.IntakeError, match="branch"):
+        git.clone("https://github.com/a/b/tree/--upload-pack=x", archive.Intake(tmp_path))
 
 
 def test_git_config_risks():
@@ -273,8 +274,8 @@ def test_git_config_risks():
         '[submodule "lib"]\n\tpath = lib\n'
         '[includeIf "gitdir:~/"]\n\tpath = /tmp/evil\n'
     )
-    assert extract.git_config_risks(cfg) == ["alias.pwn", "core.fsmonitor", "filter.process", "includeif.path"]
-    assert extract.git_config_risks("[core]\n\tfsmonitor = true\n\tbare = false\n") == []
+    assert git.git_config_risks(cfg) == ["alias.pwn", "core.fsmonitor", "filter.process", "includeif.path"]
+    assert git.git_config_risks("[core]\n\tfsmonitor = true\n\tbare = false\n") == []
 
 
 def test_zip_with_dangerous_git_config_is_neutralized(tmp_path):
@@ -289,7 +290,7 @@ def test_zip_with_dangerous_git_config_is_neutralized(tmp_path):
         ("proj/vendor/x/refs/", b"", stat.S_IFDIR | 0o755),
         ("proj/sub/.git", b"gitdir: /home/user/.secret-repo\n", stat.S_IFREG | 0o644),
     ])
-    info = extract.intake(str(z), tmp_path / "out")
+    info = unpack.intake(str(z), tmp_path / "out")
     root = tmp_path / "out" / "proj"
     assert not (root / ".git" / "config").exists() and (root / ".git" / "config.baitbox-off").exists()
     assert not (root / "vendor/x/config").exists()
@@ -303,6 +304,6 @@ def test_normal_git_config_is_kept(tmp_path):
     write(src, ".git/config", '[core]\n\tbare = false\n[remote "origin"]\n\turl = git@github.com:a/b.git\n[branch "main"]\n\tremote = origin\n')
     write(src, ".git/HEAD", "ref: refs/heads/main\n")
     write(src, "a.js", "1")
-    info = extract.intake(str(src), tmp_path / "out")
+    info = unpack.intake(str(src), tmp_path / "out")
     assert (tmp_path / "out" / ".git" / "config").exists()
     assert info["skipped"] == []

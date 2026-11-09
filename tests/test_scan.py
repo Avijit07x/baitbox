@@ -1,7 +1,8 @@
 import json
 import os
 
-import scan
+from baitbox import cli, scan
+from baitbox.scan import rules
 from conftest import write
 
 
@@ -31,7 +32,7 @@ def test_known_hash(tmp_path, monkeypatch):
     p = write(tmp_path, "x.js", "let a = 1\n")
     import hashlib
 
-    monkeypatch.setitem(scan.KNOWN_HASHES, hashlib.sha256(p.read_bytes()).hexdigest(), "test payload")
+    monkeypatch.setitem(rules.KNOWN_HASHES, hashlib.sha256(p.read_bytes()).hexdigest(), "test payload")
     r = scan.scan(tmp_path)
     assert any(f["kind"] == "known-malware" and "test payload" in f["what"] for f in r["findings"])
 
@@ -169,8 +170,8 @@ def test_render_and_json(tmp_path):
 
 
 def test_cli_exit_codes(tmp_path, capsys):
-    assert scan.main([str(tmp_path / "missing")]) == 2
-    assert scan.main([str(tmp_path), "--json"]) == 0
+    assert cli.main(["scan", str(tmp_path / "missing")]) == 2
+    assert cli.main(["scan", str(tmp_path), "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["root"] == str(tmp_path.resolve())
 
 

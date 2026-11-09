@@ -1,168 +1,48 @@
-import argparse
-import ipaddress
-import json
 import posixpath
 import re
-import sys
 from collections import Counter
-from pathlib import Path
 
-DEFAULT_FAKE_HOME = "/home/alex"
-SEVERITIES = ("high", "medium", "info")
-MAX_ITEMS = 60
-
-HIGH_BINS = {
-    "sudo", "su", "pkexec", "doas", "curl", "wget", "nc", "ncat", "netcat", "socat", "telnet", "ssh", "scp",
-    "sftp", "systemctl", "crontab", "at", "usermod", "useradd", "passwd", "chpasswd", "xdotool", "xclip",
-    "xsel", "wl-copy", "wl-paste", "secret-tool", "powershell", "pwsh", "osascript", "security", "insmod",
-    "modprobe", "mount", "nsenter", "unshare", "gsettings", "dconf",
-}
-MEDIUM_BINS = {
-    "python", "python2", "python3", "perl", "ruby", "php", "lua", "base64", "openssl", "gpg", "xxd", "dd",
-    "zip", "7z", "7za", "rar", "tar", "scrot", "import", "gnome-screenshot", "ps", "pgrep", "pkill", "kill",
-    "killall", "ip", "ifconfig", "netstat", "ss", "arp", "lsblk", "whoami", "hostnamectl", "lscpu", "lspci",
-    "dmidecode", "chattr", "chmod", "chown", "ln", "screen", "tmux", "xdg-open", "find", "nohup", "setsid",
-}
-QUIET_BINS = {"timeout", "bwrap"}
-EARLY_PHASES = ("config load", "install scripts", "install")
-BAD_DNS = (
-    "ngrok.io", "ngrok-free.app", "ngrok.app", "trycloudflare.com", "duckdns.org", "no-ip.org", "no-ip.biz", "ddns.net",
-    "hopto.org", "serveo.net", "localtunnel.me", "loca.lt", "pastebin.com", "paste.ee", "transfer.sh", "webhook.site",
-    "requestbin.net", "pipedream.net", "api.telegram.org", "interact.sh", "oast.fun", "oast.live", "oast.me",
-    "burpcollaborator.net", "canarytokens.com", "ipinfo.io", "ip-api.com", "ifconfig.me", "icanhazip.com",
-    "api.ipify.org", "checkip.amazonaws.com", "ipwho.is", "geolocation-db.com",
+from baitbox import SEVERITIES
+from baitbox.analyze.rules import (
+    BAD_DNS,
+    EARLY_PHASES,
+    HIGH_BINS,
+    HOME_CACHES,
+    HOME_EXEC_OK,
+    MEDIUM_BINS,
+    NET_DNS_OK,
+    NONET_DNS_INFO,
+    PERSIST_HOME,
+    PERSIST_SYSTEM,
+    PKG_TOOL_MARKERS,
+    PKG_TOOLS,
+    REGISTRY_NETS,
+    SANDBOX_PROBES,
+    SENSITIVE_HOME,
+    SENSITIVE_SYSTEM,
+    WRITE_OK_SYSTEM,
 )
-PKG_TOOLS = {"npm", "npx", "pnpm", "pnpx", "yarn", "yarnpkg", "corepack", "bun", "bunx"}
-PKG_TOOL_MARKERS = ("npm-cli.js", "npx-cli.js", "pnpm.cjs", "pnpm.mjs", "yarn.js", "corepack")
-REGISTRY_NETS = [ipaddress.ip_network(n) for n in ("104.16.0.0/12", "172.64.0.0/13", "2606:4700::/32")]
-NET_DNS_OK = (
-    "registry.npmjs.org", "registry.yarnpkg.com", "npm.pkg.github.com", "codeload.github.com", "github.com",
-    "api.github.com", "objects.githubusercontent.com", "nodejs.org", "registry.npmmirror.com",
+from baitbox.analyze.strace import (
+    CLONE_CALLS,
+    DIRFD_STR_RE,
+    EXEC_RE,
+    FD_DECOR_RE,
+    IN4_RE,
+    IN6_RE,
+    LINE_RE,
+    MODE_RE,
+    NAME_RE,
+    PIDNS_RE,
+    RESULT_RE,
+    RESUMED_RE,
+    STRING_RE,
+    UNIX_RE,
+    WRITE_FLAGS,
+    c_unescape,
+    dns_query_name,
+    norm_ip,
+    text,
 )
-NONET_DNS_INFO = (
-    "registry.npmjs.org", "registry.yarnpkg.com", "telemetry.nextjs.org", "fonts.googleapis.com",
-    "fonts.gstatic.com", "localhost",
-)
-SANDBOX_PROBES = (
-    "/.dockerenv", "/run/.containerenv", "/proc/1/cgroup", "/proc/1/sched", "/proc/scsi/scsi", "/sys/hypervisor",
-    "/sys/class/dmi/id/product_name", "/sys/class/dmi/id/sys_vendor", "/sys/class/dmi/id/board_vendor",
-)
-WRITE_OK_SYSTEM = (
-    "/work", "/tmp", "/dev/shm", "/dev/null", "/dev/tty", "/dev/pts", "/dev/zero", "/dev/urandom", "/dev/random",
-    "/dev/full", "/proc/self", "/proc/thread-self", "/run/user",
-)
-HOME_CACHES = (
-    ".npm", ".cache", ".local/share/pnpm", ".local/state", ".pnpm-store", ".yarn", ".yarnrc", ".node_repl_history",
-    ".node-gyp", ".config/yarn", ".config/configstore", ".config/nextjs-nodejs", ".config/pnpm", ".bun",
-    ".config/turborepo", ".config/vercel", ".config/astro", ".config/ngrok", ".lesshst",
-)
-HOME_EXEC_OK = (".cache/ms-playwright", ".cache/puppeteer", ".cache/node-gyp", ".npm/_npx", ".local/share/pnpm", ".bun")
-PERSIST_HOME = (
-    ".config/systemd", ".config/autostart", ".local/share/applications", ".config/environment.d", ".bashrc",
-    ".bash_profile", ".bash_login", ".bash_logout", ".profile", ".zshrc", ".zprofile", ".zlogin", ".zshenv",
-    ".xprofile", ".xinitrc", ".xsessionrc", ".config/fish", ".local/bin", ".ssh/authorized_keys", ".ssh/rc",
-    ".ssh/config", ".config/Code/User", ".vscode/extensions", ".gitconfig", ".config/git", ".npmrc", ".pam_environment",
-    ".config/plasma-workspace", ".config/lxsession", ".config/openbox", ".config/i3", ".config/hypr",
-)
-PERSIST_SYSTEM = ("/etc", "/usr", "/var/spool/cron", "/var/lib", "/lib", "/bin", "/sbin", "/boot", "/root")
-SENSITIVE_HOME = (
-    ".ssh", ".aws", ".gnupg", ".config/google-chrome", ".config/BraveSoftware", ".config/chromium",
-    ".config/microsoft-edge", ".config/opera", ".config/vivaldi", ".config/discord", ".config/solana", ".config/gh",
-    ".mozilla", ".local/share/keyrings", ".docker/config.json", ".kube", ".git-credentials", ".netrc",
-    ".config/Exodus", ".electrum", ".ethereum", ".bitcoin", ".config/Signal", ".config/Slack", ".config/telegram-desktop",
-    ".local/share/TelegramDesktop", "Projects", "Documents", "Downloads", ".config/filezilla", ".config/rclone",
-    ".pgpass", ".my.cnf", ".config/op", ".password-store",
-)
-SENSITIVE_SYSTEM = ("/etc/shadow", "/etc/gshadow", "/etc/sudoers", "/dev/input", "/dev/uinput", "/dev/mem", "/dev/kmem")
-
-LINE_RE = re.compile(r"^(\d+)\s+(.*)$")
-NAME_RE = re.compile(r"^(\w+)\(")
-RESUMED_RE = re.compile(r"^<\.\.\. (\w+) resumed>(.*)$")
-STR = r'"((?:[^"\\]|\\.)*)"'
-STRING_RE = re.compile(STR + r"(\.\.\.)?")
-DIRFD_STR_RE = re.compile(r"(?:(?:AT_FDCWD|-?\d+)<((?:[^>\\]|\\.)*)>,\s*)?" + STR)
-RESULT_RE = re.compile(r"\)\s+=\s+(-?\d+|\?|0x[0-9a-f]+)(?:<((?:[^>\\]|\\.)*)>)?(?:\s+(E[A-Z0-9]+))?")
-EXEC_RE = re.compile(r"^execve(?:at)?\((?:-?\d+(?:<[^>]*>)?, )?" + STR + r", \[(.*?)\](?:\.\.\.)?, (?:0x|\[|NULL)")
-PIDNS_RE = re.compile(r"/\* (\d+) in strace's PID NS \*/")
-CLONE_CALLS = ("clone", "clone3", "fork", "vfork")
-FD_DECOR_RE = re.compile(r"^\s*-?\d+<((?:[^>\\]|\\.)*)>")
-IN4_RE = re.compile(r'sa_family=AF_INET, sin_port=htons\((\d+)\), sin_addr=inet_addr\("([\d.]+)"\)')
-IN6_RE = re.compile(r'sa_family=AF_INET6, sin6_port=htons\((\d+)\).*?inet_pton\(AF_INET6, "([^"]+)"')
-UNIX_RE = re.compile(r'sa_family=AF_UNIX, sun_path=(@?)' + STR)
-MODE_RE = re.compile(r",\s*0([0-7]{3,4})\b")
-WRITE_FLAGS = ("O_WRONLY", "O_RDWR", "O_CREAT", "O_TRUNC", "O_APPEND")
-SIMPLE_ESC = {"n": 10, "t": 9, "r": 13, "v": 11, "f": 12, "a": 7, "b": 8, '"': 34, "\\": 92, "'": 39}
-
-
-def c_unescape(s):
-    out = bytearray()
-    i = 0
-    n = len(s)
-    while i < n:
-        c = s[i]
-        if c != "\\":
-            out += c.encode("utf-8", "surrogateescape")
-            i += 1
-            continue
-        i += 1
-        if i >= n:
-            out.append(92)
-            break
-        c = s[i]
-        if c in SIMPLE_ESC:
-            out.append(SIMPLE_ESC[c])
-            i += 1
-        elif c == "x" and re.fullmatch(r"[0-9a-fA-F]{2}", s[i + 1:i + 3]):
-            out.append(int(s[i + 1:i + 3], 16))
-            i += 3
-        elif c in "01234567":
-            j = i
-            while j < n and j - i < 3 and s[j] in "01234567":
-                j += 1
-            out.append(int(s[i:j], 8) & 0xFF)
-            i = j
-        else:
-            out += ("\\" + c).encode("utf-8", "surrogateescape")
-            i += 1
-    return bytes(out)
-
-
-def text(s):
-    return c_unescape(s).decode("utf-8", "replace")
-
-
-def dns_query_name(b):
-    if len(b) < 17 or b[2] & 0x80 or int.from_bytes(b[4:6], "big") != 1 or b[6:8] != b"\0\0":
-        return None
-    i = 12
-    labels = []
-    while i < len(b):
-        ln = b[i]
-        if ln == 0:
-            i += 1
-            break
-        if ln > 63 or i + 1 + ln > len(b):
-            return None
-        label = b[i + 1:i + 1 + ln]
-        if not re.fullmatch(rb"[A-Za-z0-9_-]+", label):
-            return None
-        labels.append(label.decode("ascii"))
-        i += 1 + ln
-    else:
-        return None
-    if not labels or len(b) < i + 4:
-        return None
-    return ".".join(labels).lower()
-
-
-def norm_ip(ip):
-    try:
-        a = ipaddress.ip_address(ip.split("%")[0])
-    except ValueError:
-        return None
-    if isinstance(a, ipaddress.IPv6Address) and a.ipv4_mapped:
-        return a.ipv4_mapped
-    return a
 
 
 def under(path, prefix):
@@ -547,153 +427,3 @@ class TraceReader:
                 continue
             if under_any(path, PERSIST_SYSTEM):
                 self.f.add("high", "persistence", f"tried to change system files ({name}): {path}", label, status)
-
-
-def read_lines(path):
-    with open(path, "r", encoding="utf-8", errors="surrogateescape") as fh:
-        for line in fh:
-            yield line.rstrip("\n")
-
-
-def home_changes(path, decoys, findings):
-    if not path.exists():
-        return 0
-    old, new = {}, {}
-    for line in read_lines(path):
-        if line[:2] not in ("< ", "> "):
-            continue
-        body = line[2:]
-        if body.startswith("symlink  "):
-            name = body[len("symlink  "):].split(" -> ")[0]
-        else:
-            parts = body.split("  ", 1)
-            if len(parts) != 2:
-                continue
-            name = parts[1]
-        name = name[2:] if name.startswith("./") else name
-        (old if line[0] == "<" else new)[name] = body
-    count = 0
-    for name in sorted(set(old) | set(new)):
-        if name in old and name in new:
-            what = "changed"
-        elif name in new:
-            what = "added"
-        else:
-            what = "removed"
-        count += 1
-        if name in decoys:
-            findings.add("high", "bait", f"bait secret {what}: ~/{name}")
-        elif under_any(name, PERSIST_HOME) or under_any(name, SENSITIVE_HOME):
-            findings.add("high", "persistence", f"file {what} in a startup or secrets location: ~/{name}")
-        elif under(name, ".config"):
-            findings.add("info", "files", f"app settings {what}: ~/{name}")
-        else:
-            findings.add("medium", "files", f"file {what} in the home folder: ~/{name}")
-    return count
-
-
-def read_small(path, default=""):
-    try:
-        return path.read_text(encoding="utf-8", errors="replace").strip()
-    except OSError:
-        return default
-
-
-def analyze(box):
-    box = Path(box)
-    logs = box / "logs"
-    meta = {}
-    try:
-        meta = json.loads((box / "meta.json").read_text())
-    except (OSError, ValueError):
-        pass
-    fake_home = meta.get("fake_home") or DEFAULT_FAKE_HOME
-    decoys = [d for d in read_small(box / "decoys.txt").splitlines() if d]
-    runs = []
-    for trace in sorted(logs.glob("*.trace")) if logs.is_dir() else []:
-        tag = trace.stem
-        mm = re.search(r"-(net|nonet)-", tag)
-        mode = mm.group(1) if mm else "nonet"
-        reader = TraceReader(fake_home, decoys, mode)
-        for line in read_lines(trace):
-            reader.feed(line)
-        changed = home_changes(logs / f"{tag}.homediff", set(decoys), reader.f)
-        status = read_small(logs / f"{tag}.status", "?")
-        run = {
-            "run": tag,
-            "mode": mode,
-            "command": read_small(logs / f"{tag}.cmd"),
-            "time_limit_seconds": read_small(logs / f"{tag}.limit", "?"),
-            "seconds": read_small(logs / f"{tag}.seconds", "?"),
-            "exit_status": status,
-            "timed_out": status == "124",
-            "sandbox_started": reader.inner_started,
-            "trace_lines": reader.lines,
-            "programs": dict(reader.programs.most_common(25)),
-            "fake_home_changes": changed,
-            "output_file": str(logs / f"{tag}.out"),
-            "trace_file": str(trace),
-            "findings": reader.f.sorted()[: MAX_ITEMS * 3],
-            "error": "" if reader.inner_started else "the sandbox did not start, so nothing ran",
-        }
-        runs.append(run)
-    counts = Counter(f["severity"] for r in runs for f in r["findings"])
-    if counts["high"]:
-        verdict = "malicious-behaviour"
-    elif not runs or any(r["error"] for r in runs):
-        verdict = "error"
-    elif counts["medium"]:
-        verdict = "suspicious"
-    else:
-        verdict = "nothing-seen"
-    return {"box": str(box), "fake_home": fake_home, "verdict": verdict, "counts": dict(counts), "runs": runs}
-
-
-def render(result):
-    out = [f"# Sandbox runs in {result['box']}", f"verdict: {result['verdict']}", ""]
-    if not result["runs"]:
-        out.append("No recordings found. Run box.sh first.")
-    for r in result["runs"]:
-        out.append(f"## {r['run']} ({r['mode']})")
-        cmd = r["command"].replace("\n", " ")
-        out.append(f"command: {cmd[:300]}{'...' if len(cmd) > 300 else ''}")
-        extra = ", stopped by the time limit" if r["timed_out"] else ""
-        out.append(f"exit: {r['exit_status']}{extra}; ran {r['seconds']}s of {r['time_limit_seconds']}s")
-        if r["error"]:
-            out.append(f"ERROR: {r['error']}")
-        if r["programs"]:
-            out.append("programs: " + ", ".join(f"{k} x{v}" for k, v in r["programs"].items()))
-        if not r["findings"]:
-            out.append("findings: none")
-        for sev in SEVERITIES:
-            items = [f for f in r["findings"] if f["severity"] == sev]
-            if not items:
-                continue
-            out.append(f"{sev.upper()} ({len(items)})")
-            for f in items[:MAX_ITEMS]:
-                count = f" x{f['count']}" if f["count"] > 1 else ""
-                by = f" | {f['phase']}" if f.get("phase") else ""
-                by += f" | by {f['process']}" if f["process"] else ""
-                detail = f" ({f['detail']})" if f["detail"] and f["detail"] != "ok" else ""
-                out.append(f"  - {f['what']}{detail}{count}{by}")
-            if len(items) > MAX_ITEMS:
-                out.append(f"  ... and {len(items) - MAX_ITEMS} more")
-        out.append(f"output: {r['output_file']}")
-        out.append("")
-    return "\n".join(out)
-
-
-def main(argv=None):
-    p = argparse.ArgumentParser(prog="analyze.py", description="Summarise BaitBox sandbox recordings.")
-    p.add_argument("box", help="box folder given to box.sh")
-    p.add_argument("--json", action="store_true", help="print JSON")
-    a = p.parse_args(argv)
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(errors="backslashreplace")
-    result = analyze(a.box)
-    print(json.dumps(result, indent=2) if a.json else render(result))
-    return {"nothing-seen": 0, "suspicious": 1, "malicious-behaviour": 2}.get(result["verdict"], 3)
-
-
-if __name__ == "__main__":
-    sys.exit(main())
